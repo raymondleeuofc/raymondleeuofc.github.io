@@ -1,0 +1,334 @@
+<?xml version="1.0" encoding="UTF-8" standalone="no"?>
+<!DOCTYPE html
+	PUBLIC "-//W3C//DTD XHTML 1.0 Transitional//EN" "http://www.w3.org/TR/xhtml1/DTD/xhtml1-transitional.dtd">
+<html xmlns="http://www.w3.org/1999/xhtml">
+<head>
+	<meta http-equiv="Permissions-Policy" content="interest-cohort=()">
+	<meta name="viewport" content="width=device-width, initial-scale=1.0">
+
+	<style>
+		.disconnected {
+			background-color: gray;
+		}
+		.broken {
+			background-color: red;
+		}
+		.connected {
+			background-color: greenyellow;
+		}
+		.geo-icon-blue {
+			background-color: blue;
+			width: 20px;
+			height: 20px;
+			border-radius: 50%;
+			border: 2px solid white;
+		}
+		.geo-icon-green {
+			background-color: green;
+			width: 20px;
+			height: 20px;
+			border-radius: 50%;
+			border: 2px solid white;
+		}
+		.geo-icon-red {
+			background-color: red;
+			width: 20px;
+			height: 20px;
+			border-radius: 50%;
+			border: 2px solid white;
+		}
+		input[readonly] {
+			background-color: #f0f0f0;
+			color: #a0a0a0;
+			cursor: not-allowed;
+		}
+		
+	</style>
+
+	<!-- Paho MQTT -->
+
+	<script src="https://cdnjs.cloudflare.com/ajax/libs/paho-mqtt/1.0.1/mqttws31.js" type="text/javascript"></script>
+	<script type="text/javascript" src="https://ajax.googleapis.com/ajax/libs/jquery/2.1.3/jquery.min.js"></script>
+
+	<!-- Leaflet -->
+
+	<link rel="stylesheet" href="https://unpkg.com/leaflet@1.9.4/dist/leaflet.css"
+		integrity="sha256-p4NxAoJBhIIN+hmNHrzRCf9tD/miZyoHS5obTRR9BMY=" crossorigin=""/>
+	<script src="https://unpkg.com/leaflet@1.9.4/dist/leaflet.js"
+		integrity="sha256-20nQCchB9co0qIjJZRGuk2/Z9VM+kNiyxNV1lvTlZBo="	crossorigin=""></script>
+
+	<script type="text/javascript">
+
+		const my_status_topic = "ENGO_551/raymondlee/my_temperature";
+
+		var connected_flag = 0;		// 1 for connected, -1 for disconnecting.
+		var mqtt;
+		var reconnectTimeout = 2000;
+
+
+		function onConnectionLost() {
+			const disconnecting = connected_flag === -1;
+
+			connected_flag = 0;
+
+			document.getElementById("connect-button").disabled = false;
+			document.getElementById("discon-button").disabled = true;
+			document.getElementById("server-input").readOnly = false;
+			document.getElementById("port-input").readOnly = false;
+
+			if (disconnecting) {
+				document.getElementById("status").innerHTML = "Disconnected well.";
+				document.getElementById("status").className = "disconnected";
+			}
+			else {
+				console.warn('Disconnected by accident, so reconnecting...');
+				
+				// on connection broken by accident, show message in red and re-establish the connection.
+				document.getElementById("status").innerHTML = "Connection Broken! reconnecting...";
+				document.getElementById("status").className = "broken";
+
+				MQTTconnect();
+			}
+		}
+
+		function onFailure(message) {
+			console.log("Failed");
+			document.getElementById("messages").innerHTML = "Connection Failed- Retrying";
+			setTimeout(MQTTconnect, reconnectTimeout);
+		}
+
+		function onMessageArrived(r_message) {
+			out_msg = "Message received " + r_message.payloadString + "<br>";
+			out_msg = out_msg + "Message received Topic " + r_message.destinationName;
+			document.getElementById("messages").innerHTML = out_msg;
+
+			// verify if incoming message is about my status
+			if (r_message.destinationName === my_status_topic) {
+				const geojson = JSON.parse(r_message.payloadString);
+				onUpdateMyStatus(geojson);
+			}
+		}
+
+		function onConnect() {
+			document.getElementById("messages").innerHTML = "Connected to " + host + "on port " + port;
+			connected_flag = 1
+			document.getElementById("status").innerHTML = "Connected";
+			document.getElementById("status").className = "connected";
+
+			document.getElementById("connect-button").disabled = true;
+			document.getElementById("discon-button").disabled = false;
+			document.getElementById("server-input").readOnly = true;
+			document.getElementById("port-input").readOnly = true;
+
+			console.log("on Connect " + connected_flag);
+
+			mqtt.subscribe(my_status_topic);
+
+			document.getElementById("status").innerHTML = "Connected and subscribed to " + my_status_topic;
+		}
+
+		function disconnect() {
+			console.log("disconnect.")
+			if (connected_flag == 1) {
+				connected_flag = -1;	// mark disconnecting intentionally
+				mqtt.disconnect();
+			}
+		}
+
+		function MQTTconnect() {
+			document.getElementById("messages").innerHTML = "";
+			var s = document.forms["connform"]["server"].value;
+			var p = document.forms["connform"]["port"].value;
+			if (p != "") {
+				console.log("ports");
+				port = parseInt(p);
+				console.log("port" + port);
+			}
+			if (s != "") {
+				host = s;
+				console.log("host");
+			}
+			console.log("connecting to " + host + " " + port);
+			var x = Math.floor(Math.random() * 10000);
+			var cname = "orderform-" + x;
+			mqtt = new Paho.MQTT.Client(host, port, cname);
+			//document.write("connecting to "+ host);
+			var options = {
+				timeout: 3,
+				onSuccess: onConnect,
+				onFailure: onFailure,
+				useSSL: true,
+			};
+
+			mqtt.onConnectionLost = onConnectionLost;
+			mqtt.onMessageArrived = onMessageArrived;
+
+			mqtt.connect(options);
+			return false;
+		}
+
+		function send_message() {
+			document.getElementById("messages").innerHTML = "";
+			if (connected_flag !== 1) {
+				out_msg = "<b>Not Connected so can't send</b>"
+				console.log(out_msg);
+				document.getElementById("messages").innerHTML = out_msg;
+				return false;
+			}
+			var msg = document.forms["smessage"]["message"].value;
+			console.log(msg);
+
+			var topic = document.forms["smessage"]["Ptopic"].value;
+			message = new Paho.MQTT.Message(msg);
+			if (topic == "")
+				message.destinationName = "test-topic"
+			else
+				message.destinationName = topic;
+			mqtt.send(message);
+			return false;
+		}
+
+		function getRandomTemperature() {
+			return Math.floor(Math.random() * (60 - (-40) + 1)) + (-40);
+		}
+
+		function geoloc_success(position) {
+			const latitude = position.coords.latitude;
+			const longitude = position.coords.longitude;
+
+			console.log(`https://www.openstreetmap.org/#map=18/${latitude}/${longitude}`);
+
+			var geofeature = {
+				"type": "Feature",
+				"geometry": {
+					"type": "Point",
+					"coordinates": [longitude, latitude]
+				},
+				"properties": {
+					"temperature": getRandomTemperature(),
+					"unit": "Celsius",
+					"description": "Current temperature in my location"
+				}
+			};
+
+			const jsonMessage = JSON.stringify(geofeature, null, 2);
+			console.log(jsonMessage);
+
+			document.getElementById("messages").innerHTML = "sending my location...";
+			if (connected_flag !== 1) {
+				out_msg = "<b>Not Connected so can't send</b>"
+				console.log(out_msg);
+				document.getElementById("messages").innerHTML = out_msg;
+				return;
+			}
+
+			message = new Paho.MQTT.Message(jsonMessage);
+			message.destinationName = my_status_topic;
+			mqtt.send(message);
+
+			document.getElementById("messages").innerHTML = "my location sent!";
+  		}
+
+		function geoloc_error() {
+			console.warn("*** fail to get geolocation !");
+		}
+
+		function share_my_status() {
+			if (!navigator.geolocation) {
+				console.warn("Geolocation is not supported by your browser");
+			} else {
+				console.log("Locating…");
+				navigator.geolocation.getCurrentPosition(geoloc_success, geoloc_error);
+			}
+			return false;
+		}
+
+	</script>
+
+	<title>ENGO 551 Lab 5</title>
+</head>
+
+<body>
+	<div id="status" class="disconnected">Not Connected</div>
+
+	<form name="connform" action="" onsubmit="return MQTTconnect()">
+		Broker &nbsp;&nbsp;
+			host:<input type="text" id="server-input" name="server" value="test.mosquitto.org">
+			port:<input type="text" id="port-input" name="port" value="8081">
+
+		<input type="submit" id="connect-button" name="connect" value="Start">
+		<input type="button" id="discon-button" name="discon" value="End" disabled
+			onclick="disconnect()">
+	</form>
+
+	<form name="smessage" action="" onsubmit="return send_message()">
+		Publish Topic: <input type="text" name="Ptopic" size="40">
+		Message: <input type="text" name="message" size="40">
+		<input type="submit" value="Publish">&nbsp;&nbsp;
+		<input type="submit" value="Share my status" onclick="share_my_status()">
+
+	</form>
+
+    <div id="map" style="width: 100%; height: 768px;"></div>
+
+	<hr>
+	Messages:<p id="messages"></p>
+
+	<script>
+        // Load Map around Calgary.
+    
+        const map = L.map('map').setView([51.0447, -114.0719], 9);
+
+        L.tileLayer('https://tile.openstreetmap.org/{z}/{x}/{y}.png', {
+            maxZoom: 19,
+            attribution: '&copy; <a href="http://www.openstreetmap.org/copyright">OpenStreetMap</a>'
+        }).addTo(map);
+
+        // Mark my location with temperature on status updates
+
+        function onEachFeature(feature, layer) {
+            let popupContent = `<p>Current Temprature: ${feature.properties?.temperature} ${feature.properties?.unit}</p>`;
+
+            layer.bindPopup(popupContent);
+        }
+
+		var marker;
+
+		function onUpdateMyStatus(geofeature) {
+			// console.info(`onUpdateMyStatus ...${JSON.stringify(geofeature)}`);
+
+			map.flyTo({
+				lat: geofeature.geometry.coordinates[1], 
+				lng: geofeature.geometry.coordinates[0]
+			}, 13);
+
+			var temperature = geofeature.properties.temperature;
+
+			var iconClassName = 'geo-icon-blue';
+			if (temperature >= 10) iconClassName = 'geo-icon-green';
+			if (temperature >= 30) iconClassName = 'geo-icon-red';
+
+			const geoIcon = L.divIcon({
+				className: iconClassName,
+				iconSize: [20, 20], // Size of the icon
+				iconAnchor: [10, 10] // Anchor point of the icon
+			});
+
+			if (marker) {
+				map.removeLayer(marker);
+				marker = null;
+			}
+
+			L.geoJSON([geofeature], {
+				onEachFeature,
+				pointToLayer: (feature, latlng) => {
+					marker = L.marker(latlng, {icon: geoIcon});
+					return marker;
+				}
+			}).addTo(map);
+		}
+    
+    </script>
+</body>
+
+</html>
